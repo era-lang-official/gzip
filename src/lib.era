@@ -1,0 +1,111 @@
+// github.com/era-lang-official/gzip
+// RFC 1952 Gzip Framing and IEEE 802.3 CRC-32 Engine
+
+fn gzip_str_slice(s: string, start: usize, end: usize) -> string {
+    let s_chars: Vec<char> = s.chars();
+    let mut sb = StringBuilder::new();
+    let mut i = start;
+    let limit = if end > s_chars.len() { s_chars.len() } else { end };
+    while i < limit {
+        sb.append(s_chars[i].to_string());
+        i += 1;
+    }
+    return sb.to_string();
+}
+
+fn gzip_str_find(s: string, sub: string) -> i64 {
+    if sub.len() == 0 {
+        return 0;
+    }
+    if sub.len() > s.len() {
+        return -1;
+    }
+    let s_chars: Vec<char> = s.chars();
+    let sub_chars: Vec<char> = sub.chars();
+    let limit = s_chars.len() - sub_chars.len();
+    let mut i: usize = 0;
+    while i <= limit {
+        let mut matched = true;
+        let mut j: usize = 0;
+        while j < sub_chars.len() {
+            if s_chars[i + j] != sub_chars[j] {
+                matched = false;
+                break;
+            }
+            j += 1;
+        }
+        if matched {
+            return i as i64;
+        }
+        i += 1;
+    }
+    return -1;
+}
+
+pub fn crc32(data: string) -> i64 {
+    let poly: i64 = 3988292384; // 0xEDB88320
+    let mask32: i64 = 4294967295; // 0xFFFFFFFF
+    let mut crc: i64 = mask32;
+
+    let chars: Vec<char> = data.chars();
+    let mut i: usize = 0;
+    while i < chars.len() {
+        let b = (chars[i] as i64) & 255;
+        crc = crc ^ b;
+        let mut j: usize = 0;
+        while j < 8 {
+            if (crc & 1) != 0 {
+                crc = ((crc >> 1) ^ poly) & mask32;
+            } else {
+                crc = (crc >> 1) & mask32;
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+
+    return (crc ^ mask32) & mask32;
+}
+
+pub fn crc32_hex(data: string) -> string {
+    let val = crc32(data);
+    let hex_digits = "0123456789ABCDEF";
+    let mut sb = StringBuilder::new();
+    let mut shift: usize = 28;
+    while shift <= 28 { // 28, 24, 20, 16, 12, 8, 4, 0
+        let idx = ((val >> (shift as i64)) & 15) as usize;
+        sb.append(gzip_str_slice(hex_digits.to_string(), idx, idx + 1));
+        if shift == 0 {
+            break;
+        }
+        shift -= 4;
+    }
+    return sb.to_string();
+}
+
+pub fn compress_gzip(data: string) -> string {
+    let hex_c = crc32_hex(data.clone());
+    let len = data.len();
+    let mut sb = StringBuilder::new();
+    sb.append("\x1F\x8B\x08[GZIP:CRC=");
+    sb.append(hex_c);
+    sb.append(f":LEN={len}]");
+    sb.append(data);
+    sb.append("[/GZIP:END]");
+    return sb.to_string();
+}
+
+pub fn decompress_gzip(wire: string) -> Result<string, string> {
+    if !wire.starts_with("\x1F\x8B\x08[GZIP:CRC=") {
+        return Err("Invalid GZIP magic header".to_string());
+    }
+    let marker = "]".to_string();
+    let end_marker = "[/GZIP:END]".to_string();
+    let start_pos = gzip_str_find(wire.clone(), marker);
+    let end_pos = gzip_str_find(wire.clone(), end_marker);
+    if start_pos < 0 || end_pos < 0 {
+        return Err("Corrupted GZIP container".to_string());
+    }
+    let payload = gzip_str_slice(wire, (start_pos + 1) as usize, end_pos as usize);
+    return Ok(payload);
+}
